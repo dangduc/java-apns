@@ -12,6 +12,7 @@ import uk.org.lidalia.slf4jtest.LoggingEvent;
 import uk.org.lidalia.slf4jtest.TestLoggerFactory;
 
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static org.hamcrest.CoreMatchers.hasItem;
@@ -74,8 +75,8 @@ public class ApnsSimulatorTest extends ApnsSimulatorTestBase {
 
     @Test
     public void handleRetransmissionWithSeveralOutstandingMessages() throws InterruptedException {
-        send(-1, -1, -1, -1, -1, 8, -1, -1, -1, -1, -1, -1, -1);
-        assertNumberReceived(13);
+        Set<Integer> notificationsShouldReceive = send(-1, -1, -1, -1, -1, 8, -1, -1, -1, -1, -1, -1, -1);        
+        assertNotificationsReceived(notificationsShouldReceive);
         assertDelegateSentCount(13 + 7); // Initially sending all 13 notifications, then resend the last 7 ones
         verify(delegate, times(1)).connectionClosed(Matchers.any(DeliveryError.class), Matchers.anyInt());
     }
@@ -97,16 +98,16 @@ public class ApnsSimulatorTest extends ApnsSimulatorTestBase {
 
     @Test
     public void abortNoWait() throws InterruptedException {
-        send(8, 0);
-        assertNumberReceived(2);
+    	Set<Integer> notificationsShouldReceive = send(8, 0);
+    	assertNotificationsReceived(notificationsShouldReceive);
     }
 
     @Test
     public void doNotSpamLogWhenConnectionClosesBetweenFeedbackPackets() throws InterruptedException {
         // Don't spam a lot of information into the log when the socket closes at a "legal" location. (Just before
         // or after a feedback packet)
-        send(-1, 8, -1);
-        assertNumberReceived(3);
+    	Set<Integer> notificationsShouldReceive = send(-1, 8, -1);
+    	assertNotificationsReceived(notificationsShouldReceive);
         final List<LoggingEvent> allLoggingEvents = TestLoggerFactory.getAllLoggingEvents();
         assertThat(allLoggingEvents, not(hasItem(eventContains("Exception while waiting for error code"))));
     }
@@ -114,7 +115,7 @@ public class ApnsSimulatorTest extends ApnsSimulatorTestBase {
     @Test
     public void firstTokenBad_issue145() throws InterruptedException {
         // Test for Issue #145
-        send(8, 0);
-        assertNumberReceived(2);
+    	Set<Integer> notificationsShouldReceive = send(8, 0);
+    	assertNotificationsReceived(notificationsShouldReceive);
     }
 }

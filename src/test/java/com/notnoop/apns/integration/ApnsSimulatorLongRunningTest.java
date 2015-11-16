@@ -1,5 +1,7 @@
 package com.notnoop.apns.integration;
 
+import java.util.Set;
+
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,8 +16,8 @@ public class ApnsSimulatorLongRunningTest extends ApnsSimulatorTestBase {
         final int rounds = 15;
         for (int i = 0; i < rounds; ++i) {
             logger.debug("*********** "+i);
-            send(8, 0);
-            assertNumberReceived(2);
+            Set<Integer> notificationsShouldReceive = send(8, 0);
+            assertNotificationsReceived(notificationsShouldReceive);
         }
 
     }
