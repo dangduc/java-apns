@@ -28,6 +28,7 @@ import static com.notnoop.apns.utils.FixedCertificates.LOCALHOST;
 import static com.notnoop.apns.utils.FixedCertificates.clientContext;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.junit.Assert.assertThat;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -178,5 +179,30 @@ public class ApnsSimulatorTestBase {
     protected void assertDelegateSentCount(final int count) {
         logger.info("assertDelegateSentCount {}", count);
         verify(delegate, times(count)).messageSent(Matchers.any(ApnsNotification.class), Matchers.anyBoolean());
+    }
+    
+    protected void assertNotificationsReceived(Set<Integer> notificationsShouldReceive) throws InterruptedException {
+        logger.debug("assertNotificationsReceived {}", notificationsShouldReceive);
+        Set<Integer> notificationsReceived = new HashSet<Integer>();
+        try {
+        	drainServerNotificationQueue();
+        	
+            for (Integer notifId : server.getSet()) {
+            	notificationsReceived.add(notifId);
+            }
+        } catch (RuntimeException re) {
+            logger.error("Exception in assertNotificationsReceived, took {}", notificationsReceived.size());
+            throw re;
+        }
+        
+        logger.debug("assertNotificationsReceived: notificationsReceived {} vs. notificationsShouldReceive {}", notificationsReceived, notificationsShouldReceive);
+        assertTrue(notificationsReceived.containsAll(notificationsShouldReceive));
+    }
+    
+    private void drainServerNotificationQueue() throws InterruptedException {
+    	Object notif = new Object();
+    	while (notif != null) {
+    		notif = server.getQueue().poll(5, TimeUnit.SECONDS);
+    	}
     }
 }
