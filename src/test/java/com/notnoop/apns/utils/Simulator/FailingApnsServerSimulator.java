@@ -6,7 +6,9 @@ import org.slf4j.LoggerFactory;
 import javax.net.ServerSocketFactory;
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentSkipListSet;
 import java.util.concurrent.LinkedBlockingQueue;
 
 /**
@@ -18,6 +20,8 @@ public class FailingApnsServerSimulator extends ApnsServerSimulator {
 
 
     private BlockingQueue<Notification> queue = new LinkedBlockingQueue<Notification>();
+    
+    private Set<Integer> set = new ConcurrentSkipListSet<Integer>();
 
     public FailingApnsServerSimulator(final ServerSocketFactory sslFactory) {
         super(sslFactory);
@@ -28,6 +32,7 @@ public class FailingApnsServerSimulator extends ApnsServerSimulator {
             throws IOException {
         logger.debug("Queueing notification " + notification);
         queue.add(notification);
+        set.add(notification.getIdentifier());
         final byte[] token = notification.getDeviceToken();
         if (token.length == 32 && token[0] == (byte)0xff && token[1] == (byte)0xff) {
             switch (token[2]) {
@@ -59,6 +64,10 @@ public class FailingApnsServerSimulator extends ApnsServerSimulator {
 
     public BlockingQueue<Notification> getQueue() {
         return queue;
+    }
+    
+    public Set<Integer> getSet() {
+        return set;
     }
 
 }
