@@ -59,6 +59,8 @@ import org.slf4j.LoggerFactory;
 public class ApnsConnectionImpl implements ApnsConnection {
 
     private static final Logger logger = LoggerFactory.getLogger(ApnsConnectionImpl.class);
+    
+    private final Object cacheNotificationsLock = new Object();
 
     private final SocketFactory factory;
     private final String host;
@@ -200,13 +202,15 @@ public class ApnsConnectionImpl implements ApnsConnection {
                         }
 
                         int resendSize = 0;
-
-                        while (!cachedNotifications.isEmpty()) {
-
-                            resendSize++;
-                            final ApnsNotification resendNotification = cachedNotifications.poll();
-                            logger.debug("Queuing for resend {}", resendNotification.getIdentifier());
-                            notificationsBuffer.add(resendNotification);
+                        synchronized (cacheNotificationsLock) {
+                        	
+	                        while (!cachedNotifications.isEmpty()) {
+	
+	                            resendSize++;
+	                            final ApnsNotification resendNotification = cachedNotifications.poll();
+	                            logger.debug("Queuing for resend {}", resendNotification.getIdentifier());
+	                            notificationsBuffer.add(resendNotification);
+	                        }
                         }
                         logger.debug("resending {} notifications", resendSize);
                         delegate.notificationsResent(resendSize);
@@ -324,10 +328,16 @@ public class ApnsConnectionImpl implements ApnsConnection {
         while (true) {
             try {
                 attempts++;
-                Socket socket = getOrCreateSocket(fromBuffer);
-                socket.getOutputStream().write(m.marshall());
-                socket.getOutputStream().flush();
-                cacheNotification(m);
+                synchronized (cacheNotificationsLock) {
+                	try {
+		                Socket socket = getOrCreateSocket(fromBuffer);
+		                socket.getOutputStream().write(m.marshall());
+		                socket.getOutputStream().flush();
+                	} finally {
+                		// if the send fails, we want to keep the message in the cache so that retrying is possible
+                		cacheNotification(m);
+                	}
+                }
 
                 delegate.messageSent(m, fromBuffer);
 
