@@ -19,7 +19,9 @@ import uk.org.lidalia.slf4jext.Level;
 import uk.org.lidalia.slf4jtest.LoggingEvent;
 import uk.org.lidalia.slf4jtest.TestLoggerFactory;
 
+import java.util.HashSet;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import static com.notnoop.apns.utils.FixedCertificates.LOCALHOST;
@@ -83,16 +85,23 @@ public class ApnsSimulatorTestBase {
         };
     }
 
-    protected void send(final int... codes) {
+    protected Set<Integer> send(final int... codes) {
+    	Set<Integer> notificationsShouldReceive = new HashSet<Integer>();
         for (int code : codes) {
-            send(code);
+        	Integer notificationId = send(code);
+        	if (notificationId != null) {
+        		notificationsShouldReceive.add(notificationId);
+        	}
         }
+        
+        return notificationsShouldReceive;
     }
 
-    protected void send(final int code) {
+    protected Integer send(final int code) {
 
         ApnsNotification notification = makeNotification(code);
         service.push(notification);
+        return notification.getIdentifier();
 
     }
 
