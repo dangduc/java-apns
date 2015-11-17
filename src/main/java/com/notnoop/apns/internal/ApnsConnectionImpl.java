@@ -131,8 +131,8 @@ public class ApnsConnectionImpl implements ApnsConnection {
         Utilities.close(socket);
     }
 
-    private void monitorSocket(final Socket socket) {
-        logger.debug("Launching Monitoring Thread for socket {}", socket);
+    private void monitorSocket(final Socket currentSocket) {
+        logger.debug("Launching Monitoring Thread for socket {}", currentSocket);
 
         Thread t = threadFactory.newThread(new Runnable() {
             final static int EXPECTED_SIZE = 6;
@@ -142,15 +142,12 @@ public class ApnsConnectionImpl implements ApnsConnection {
             public void run() {
                 logger.debug("Started monitoring thread");
                 try {
-                	
                 	InputStream in;
-                	synchronized (ApnsConnectionImpl.this) {
-	                    try {
-	                        in = socket.getInputStream();
-	                    } catch (IOException ioe) {
-	                        in = null;
-	                    }
-                	}
+                    try {
+                        in = currentSocket.getInputStream();
+                    } catch (IOException ioe) {
+                        in = null;
+                    }
 
                     byte[] bytes = new byte[EXPECTED_SIZE];
                     while (in != null && readPacket(in, bytes)) {
@@ -158,7 +155,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
 	                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
 	                        // Quickly close socket, so we won't ever try to send push notifications
 	                        // using the defective socket.
-	                        Utilities.close(socket);
+	                        Utilities.close(currentSocket);
 	
 	                        int command = bytes[0] & 0xFF;
 	                        if (command != 8) {
@@ -226,7 +223,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     delegate.connectionClosed(DeliveryError.UNKNOWN, -1);
                 } finally {
                 	synchronized (ApnsConnectionImpl.this) {
-	                    close();
+                		Utilities.close(currentSocket);
 	                    drainBuffer();
                 	}
                 }
@@ -263,42 +260,43 @@ public class ApnsConnectionImpl implements ApnsConnection {
     }
 
     private synchronized Socket getOrCreateSocket(boolean resend) throws NetworkIOException {
+    	Socket currentSocket = socket;
         if (reconnectPolicy.shouldReconnect()) {
             logger.debug("Reconnecting due to reconnectPolicy dictating it");
-            Utilities.close(socket);
-            socket = null;
+            Utilities.close(currentSocket);
+            currentSocket = null;
         }
 
-        if (socket == null || socket.isClosed()) {
+        if (currentSocket == null || currentSocket.isClosed()) {
             try {
                 if (proxy == null) {
-                    socket = factory.createSocket(host, port);
-                    logger.debug("Connected new socket {}", socket);
+                	currentSocket = factory.createSocket(host, port);
+                    logger.debug("Connected new socket {}", currentSocket);
                 } else if (proxy.type() == Proxy.Type.HTTP) {
                     TlsTunnelBuilder tunnelBuilder = new TlsTunnelBuilder();
-                    socket = tunnelBuilder.build((SSLSocketFactory) factory, proxy, proxyUsername, proxyPassword, host, port);
-                    logger.debug("Connected new socket through http tunnel {}", socket);
+                    currentSocket = tunnelBuilder.build((SSLSocketFactory) factory, proxy, proxyUsername, proxyPassword, host, port);
+                    logger.debug("Connected new socket through http tunnel {}", currentSocket);
                 } else {
                     boolean success = false;
                     Socket proxySocket = null;
                     try {
                         proxySocket = new Socket(proxy);
                         proxySocket.connect(new InetSocketAddress(host, port), connectTimeout);
-                        socket = ((SSLSocketFactory) factory).createSocket(proxySocket, host, port, false);
+                        currentSocket = ((SSLSocketFactory) factory).createSocket(proxySocket, host, port, false);
                         success = true;
                     } finally {
                         if (!success) {
                             Utilities.close(proxySocket);
                         }
                     }
-                    logger.debug("Connected new socket through socks tunnel {}", socket);
+                    logger.debug("Connected new socket through socks tunnel {}", currentSocket);
                 }
 
-                socket.setSoTimeout(readTimeout);
-                socket.setKeepAlive(true);
+                currentSocket.setSoTimeout(readTimeout);
+                currentSocket.setKeepAlive(true);
 
                 if (errorDetection) {
-                    monitorSocket(socket);
+                    monitorSocket(currentSocket);
                 }
 
                 reconnectPolicy.reconnected();
@@ -309,7 +307,10 @@ public class ApnsConnectionImpl implements ApnsConnection {
                 throw new NetworkIOException(e, resend);
             }
         }
-        return socket;
+        
+        socket = currentSocket;
+        
+        return currentSocket;
     }
 
     int DELAY_IN_MS = 1000;
@@ -328,13 +329,14 @@ public class ApnsConnectionImpl implements ApnsConnection {
         }
 
         int attempts = 0;
+        Socket currentSocket = null;
         while (true) {
             try {
                 attempts++;
             	try {
-	                Socket socket = getOrCreateSocket(fromBuffer);
-	                socket.getOutputStream().write(m.marshall());
-	                socket.getOutputStream().flush();
+	                currentSocket = getOrCreateSocket(fromBuffer);
+	                currentSocket.getOutputStream().write(m.marshall());
+	                currentSocket.getOutputStream().flush();
             	} finally {
             		// if the send fails, we want to keep the message in the cache so that retrying is possible
             		cacheNotification(m);
@@ -346,7 +348,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                 attempts = 0;
                 break;
             } catch (IOException e) {
-                Utilities.close(socket);
+                Utilities.close(currentSocket);
                 if (attempts >= RETRIES) {
                     logger.error("Couldn't send message after " + RETRIES + " retries." + m, e);
                     delegate.messageSendFailed(m, e);
