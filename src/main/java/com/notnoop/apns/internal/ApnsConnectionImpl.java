@@ -74,7 +74,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
     private final boolean errorDetection;
     private final ThreadFactory threadFactory;
     private final boolean autoAdjustCacheLength;
-    private final ConcurrentLinkedQueue<ApnsNotification> cachedNotifications, notificationsBuffer;
+    private final ConcurrentLinkedQueue<ApnsNotification> cachedNotifications;
     private Socket socket;
     private final AtomicInteger threadId = new AtomicInteger(0);
 
@@ -110,7 +110,6 @@ public class ApnsConnectionImpl implements ApnsConnection {
         this.proxyUsername = proxyUsername;
         this.proxyPassword = proxyPassword;
         cachedNotifications = new ConcurrentLinkedQueue<ApnsNotification>();
-        notificationsBuffer = new ConcurrentLinkedQueue<ApnsNotification>();
     }
 
     private ThreadFactory defaultThreadFactory() {
@@ -149,6 +148,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
             @Override
             public void run() {
                 logger.debug("Started monitoring thread");
+                ConcurrentLinkedQueue<ApnsNotification> notificationsBuffer = new ConcurrentLinkedQueue<ApnsNotification>();
                 try {
                 	InputStream in;
                     try {
@@ -233,7 +233,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     }
                     delegate.connectionClosed(DeliveryError.UNKNOWN, -1);
                 } finally {
-	                drainBuffer();
+	                drainBuffer(notificationsBuffer);
                 }
             }
 
@@ -326,7 +326,6 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
     public synchronized void sendMessage(ApnsNotification m) throws NetworkIOException {
         sendMessage(m, false);
-        drainBuffer();
     }
 
     private synchronized void sendMessage(ApnsNotification m, boolean fromBuffer) throws NetworkIOException {
@@ -376,7 +375,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
         }
     }
 
-    private synchronized void drainBuffer() {
+    private void drainBuffer(ConcurrentLinkedQueue<ApnsNotification> notificationsBuffer) {
         logger.debug("draining buffer");
         while (!notificationsBuffer.isEmpty()) {
             final ApnsNotification notification = notificationsBuffer.poll();
