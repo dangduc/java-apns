@@ -114,11 +114,22 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
     private ThreadFactory defaultThreadFactory() {
         return new ThreadFactory() {
-            ThreadFactory wrapped = Executors.defaultThreadFactory();
             @Override
-            public Thread newThread( Runnable r )
+            public Thread newThread( final Runnable r )
             {
-                Thread result = wrapped.newThread(r);
+                Thread result = new Thread(r) {
+                	@Override
+                	public void start() {
+                		try {
+                			synchronized(r) {
+                				super.start();
+                				r.wait();
+                			}
+						} catch (InterruptedException e) {
+							logger.warn("thread start interrupted for thread " + this);
+						}
+                	}
+                };
                 result.setName("MonitoringThread-"+threadId.incrementAndGet());
                 result.setDaemon(true);
                 return result;
@@ -158,6 +169,9 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     }
 
                     byte[] bytes = new byte[EXPECTED_SIZE];
+                    synchronized(this) {
+                    	this.notifyAll();
+                    }
                     while (in != null && readPacket(in, bytes)) {
                     	synchronized (ApnsConnectionImpl.this) {
 	                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
