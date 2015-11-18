@@ -128,7 +128,15 @@ public class ApnsConnectionImpl implements ApnsConnection {
     }
 
     public synchronized void close() {
-        Utilities.close(socket);
+        close(socket);
+    }
+    
+    public synchronized void close(Socket socketToClose) {
+        Utilities.close(socketToClose);
+        // also, clear object reference to socket as socket.isClose() may be unreliable
+        if (socket == socketToClose) {
+        	socket = null;
+        }
     }
 
     private void monitorSocket(final Socket currentSocket) {
@@ -155,7 +163,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
 	                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
 	                        // Quickly close socket, so we won't ever try to send push notifications
 	                        // using the defective socket.
-	                        Utilities.close(currentSocket);
+	                        close(currentSocket);
 	
 	                        int command = bytes[0] & 0xFF;
 	                        if (command != 8) {
@@ -263,7 +271,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
     	Socket currentSocket = socket;
         if (reconnectPolicy.shouldReconnect()) {
             logger.debug("Reconnecting due to reconnectPolicy dictating it");
-            Utilities.close(currentSocket);
+            close(currentSocket);
             currentSocket = null;
         }
 
@@ -286,7 +294,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                         success = true;
                     } finally {
                         if (!success) {
-                            Utilities.close(proxySocket);
+                            close(proxySocket);
                         }
                     }
                     logger.debug("Connected new socket through socks tunnel {}", currentSocket);
@@ -348,7 +356,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                 attempts = 0;
                 break;
             } catch (IOException e) {
-                Utilities.close(currentSocket);
+                close(currentSocket);
                 if (attempts >= RETRIES) {
                     logger.error("Couldn't send message after " + RETRIES + " retries." + m, e);
                     delegate.messageSendFailed(m, e);
