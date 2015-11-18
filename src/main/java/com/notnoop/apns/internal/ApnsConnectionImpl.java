@@ -228,12 +228,12 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     // sending the message. Other than providing a more stable network connection to the APNS
                     // server we can't do much about it - so let's not spam the application's error log.
                     logger.info("Exception while waiting for error code", e);
+                    synchronized (ApnsConnectionImpl.this) {
+                    	close(currentSocket);
+                    }
                     delegate.connectionClosed(DeliveryError.UNKNOWN, -1);
                 } finally {
-                	synchronized (ApnsConnectionImpl.this) {
-                		Utilities.close(currentSocket);
-	                    drainBuffer();
-                	}
+	                drainBuffer();
                 }
             }
 
