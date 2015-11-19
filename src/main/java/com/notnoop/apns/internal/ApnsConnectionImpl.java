@@ -177,12 +177,14 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     	this.notifyAll();
                     }
                     while (in != null && readPacket(in, bytes)) {
+                        // Quickly close socket, so we won't ever try to send push notifications
+                        // using the defective socket.
+
+                        close(currentSocket);
+                        
                     	synchronized (cachedNotifications) {
                         	try {
 		                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
-		                        // Quickly close socket, so we won't ever try to send push notifications
-		                        // using the defective socket.
-		                        close(currentSocket);
 	
 		                        int command = bytes[0] & 0xFF;
 		                        if (command != 8) {
