@@ -177,7 +177,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     	this.notifyAll();
                     }
                     while (in != null && readPacket(in, bytes)) {
-                    	synchronized (ApnsConnectionImpl.this) {
+                    	synchronized (cachedNotifications) {
                         	try {
 		                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
 		                        // Quickly close socket, so we won't ever try to send push notifications
@@ -414,11 +414,13 @@ public class ApnsConnectionImpl implements ApnsConnection {
     }
 
     private void cacheNotification(ApnsNotification notification) {
-        cachedNotifications.add(notification);
-        while (cachedNotifications.size() > cacheLength) {
-            cachedNotifications.poll();
-            logger.debug("Removing notification from cache " + notification);
-        }
+    	synchronized( cachedNotifications ) {
+	        cachedNotifications.add(notification);
+	        while (cachedNotifications.size() > cacheLength) {
+	            cachedNotifications.poll();
+	            logger.debug("Removing notification from cache " + notification);
+	        }
+    	}
     }
 
     public ApnsConnectionImpl copy() {
