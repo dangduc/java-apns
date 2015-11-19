@@ -49,6 +49,7 @@ public enum DeliveryError {
     INVALID_TOPIC_SIZE(6),
     INVALID_PAYLOAD_SIZE(7),
     INVALID_TOKEN(8),
+    SHUTDOWN(10),
 
     NONE(255),
     UNKNOWN(254);
@@ -77,5 +78,19 @@ public enum DeliveryError {
         }
 
         return UNKNOWN;
+    }
+    
+    /**
+     * @return Should the notification that this delivery pertains to be retried
+     */
+    public boolean shouldRetryFailedDelivery() {
+    	switch (this) {
+    	case NO_ERROR:
+    	case SHUTDOWN:
+    	case PROCESSING_ERROR:
+    	
+    	default:
+    		return false;
+    	}
     }
 }

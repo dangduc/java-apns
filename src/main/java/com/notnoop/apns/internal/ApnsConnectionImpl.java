@@ -39,6 +39,7 @@ import java.net.Socket;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -132,6 +133,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                 };
                 result.setName("MonitoringThread-"+threadId.incrementAndGet());
                 result.setDaemon(true);
+                result.setPriority(Math.min(result.getPriority()+1, Thread.MAX_PRIORITY));
                 return result;
             }
         };
@@ -149,6 +151,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
         }
     }
 
+    Executor serialExecutor = Executors.newSingleThreadExecutor();
     private void monitorSocket(final Socket currentSocket) {
         logger.debug("Launching Monitoring Thread for socket {}", currentSocket);
 
@@ -159,9 +162,9 @@ public class ApnsConnectionImpl implements ApnsConnection {
             @Override
             public void run() {
                 logger.debug("Started monitoring thread");
-                ConcurrentLinkedQueue<ApnsNotification> notificationsBuffer = new ConcurrentLinkedQueue<ApnsNotification>();
+                final ConcurrentLinkedQueue<ApnsNotification> notificationsBuffer = new ConcurrentLinkedQueue<ApnsNotification>();
                 try {
-                	InputStream in;
+                    InputStream in;
                     try {
                         in = currentSocket.getInputStream();
                     } catch (IOException ioe) {
@@ -170,84 +173,90 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
                     byte[] bytes = new byte[EXPECTED_SIZE];
                     synchronized(this) {
+                    	// notify wait in start() method that ensures this thread is off and running
                     	this.notifyAll();
                     }
                     while (in != null && readPacket(in, bytes)) {
                     	synchronized (ApnsConnectionImpl.this) {
-	                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
-	                        // Quickly close socket, so we won't ever try to send push notifications
-	                        // using the defective socket.
-	                        close(currentSocket);
+                        	try {
+		                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
+		                        // Quickly close socket, so we won't ever try to send push notifications
+		                        // using the defective socket.
+		                        close(currentSocket);
 	
-	                        int command = bytes[0] & 0xFF;
-	                        if (command != 8) {
-	                            throw new IOException("Unexpected command byte " + command);
-	                        }
-	                        int statusCode = bytes[1] & 0xFF;
-	                        DeliveryError e = DeliveryError.ofCode(statusCode);
+		                        int command = bytes[0] & 0xFF;
+		                        if (command != 8) {
+		                            throw new IOException("Unexpected command byte " + command);
+		                        }
+		                        int statusCode = bytes[1] & 0xFF;
+		                        DeliveryError e = DeliveryError.ofCode(statusCode);
 	
-	                        int id = Utilities.parseBytes(bytes[2], bytes[3], bytes[4], bytes[5]);
+		                        int id = Utilities.parseBytes(bytes[2], bytes[3], bytes[4], bytes[5]);
 	
-	                        logger.debug("Closed connection cause={}; id={}", e, id);
-	                        delegate.connectionClosed(e, id);
+		                        logger.debug("Closed connection cause={}; id={}", e, id);
+		                        delegate.connectionClosed(e, id);
 	
-	                        Queue<ApnsNotification> tempCache = new LinkedList<ApnsNotification>();
-	                        ApnsNotification notification = null;
-	                        boolean foundNotification = false;
+		                        Queue<ApnsNotification> tempCache = new LinkedList<ApnsNotification>();
+		                        ApnsNotification failedNotification = null;
 	
-	                        while (!cachedNotifications.isEmpty()) {
-	                            notification = cachedNotifications.poll();
-	                            logger.debug("Candidate for removal, message id {}", notification.getIdentifier());
+		                        while (!cachedNotifications.isEmpty()) {
+		                        	ApnsNotification notification = cachedNotifications.poll();
+		                            logger.debug("Candidate for removal, message id {}", notification.getIdentifier());
 	
-	                            if (notification.getIdentifier() == id) {
-	                                logger.debug("Bad message found {}", notification.getIdentifier());
-	                                foundNotification = true;
-	                                break;
-	                            }
-	                            tempCache.add(notification);
-	                        }
+		                            if (notification.getIdentifier() == id) {
+		                                logger.debug("Bad message found {}", notification.getIdentifier());
+		                                failedNotification = notification;
+		                                break;
+		                            }
+		                            tempCache.add(notification);
+		                        }
 	
-	                        if (foundNotification) {
-	                            logger.debug("delegate.messageSendFailed, message id {}", notification.getIdentifier());
-	                            delegate.messageSendFailed(notification, new ApnsDeliveryErrorException(e));
-	                        } else {
-	                            cachedNotifications.addAll(tempCache);
-	                            int resendSize = tempCache.size();
-	                            logger.warn("Received error for message that wasn't in the cache...");
-	                            if (autoAdjustCacheLength) {
-	                                cacheLength = cacheLength + (resendSize / 2);
-	                                delegate.cacheLengthExceeded(cacheLength);
-	                            }
-	                            logger.debug("delegate.messageSendFailed, unknown id");
-	                            delegate.messageSendFailed(null, new ApnsDeliveryErrorException(e));
-	                        }
+		                        if (failedNotification != null) { // notification found
+		                            logger.debug("delegate.messageSendFailed, message id {}", failedNotification.getIdentifier());
+		                            delegate.messageSendFailed(failedNotification, new ApnsDeliveryErrorException(e));
+		                            
+		                            // in some cases we can retry the message the failure occurred on
+		                            if ( e.shouldRetryFailedDelivery() )
+		                            	notificationsBuffer.add(failedNotification);
+		                        } else {
+		                            cachedNotifications.addAll(tempCache);
+		                            int resendSize = tempCache.size();
+		                            logger.warn("Received error for message that wasn't in the cache...");
+		                            if (autoAdjustCacheLength) {
+		                                cacheLength = cacheLength + (resendSize / 2);
+		                                delegate.cacheLengthExceeded(cacheLength);
+		                            }
+		                            logger.debug("delegate.messageSendFailed, unknown id");
+		                            delegate.messageSendFailed(null, new ApnsDeliveryErrorException(e));
+		                        }
 	
-	                        int resendSize = 0;
-	                        	
-	                        while (!cachedNotifications.isEmpty()) {
-	
-	                            resendSize++;
-	                            final ApnsNotification resendNotification = cachedNotifications.poll();
-	                            logger.debug("Queuing for resend {}", resendNotification.getIdentifier());
-	                            notificationsBuffer.add(resendNotification);
-	                        }
-	                        logger.debug("resending {} notifications", resendSize);
-	                        delegate.notificationsResent(resendSize);
+		                        while (!cachedNotifications.isEmpty()) {
+		                            final ApnsNotification resendNotification = cachedNotifications.poll();
+		                            logger.debug("Queuing for resend {}", resendNotification.getIdentifier());
+		                            notificationsBuffer.add(resendNotification);
+		                        }
+		                        logger.debug("resending {} notifications", notificationsBuffer.size());
+		                        delegate.notificationsResent(notificationsBuffer.size());
+    	                    }
+    	                    finally {
+    	                    	serialExecutor.execute( new Runnable() {
+    	                    		public void run() {
+    	            	                drainBuffer(notificationsBuffer);                			
+    	                    		}
+    	                    	});
+    	                    }
+                        	
+	                    	logger.debug("Monitoring input stream closed by EOF");
+
                     	} // end synchronization on ApnsConnectionImpl.this
                     }
-                    logger.debug("Monitoring input stream closed by EOF");
-
                 } catch (IOException e) {
                     // An exception when reading the error code is non-critical, it will cause another retry
                     // sending the message. Other than providing a more stable network connection to the APNS
                     // server we can't do much about it - so let's not spam the application's error log.
                     logger.info("Exception while waiting for error code", e);
-                    synchronized (ApnsConnectionImpl.this) {
-                    	close(currentSocket);
-                    }
+                    close(currentSocket);
                     delegate.connectionClosed(DeliveryError.UNKNOWN, -1);
-                } finally {
-	                drainBuffer(notificationsBuffer);
                 }
             }
 
