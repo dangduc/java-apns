@@ -30,7 +30,7 @@ public class ApnsSimulatorTest extends ApnsSimulatorTestBase {
     //public DumpThreadsOnErrorRule dump = new DumpThreadsOnErrorRule();
 
     @Rule
-    public Timeout timeout = new Timeout(5000);
+    public Timeout timeout = new Timeout(10000);
 
 
     @Test
