@@ -39,9 +39,10 @@ import java.net.Socket;
 import java.util.LinkedList;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import javax.net.SocketFactory;
@@ -96,6 +97,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
     public ApnsConnectionImpl(SocketFactory factory, String host, int port, Proxy proxy, String proxyUsername, String proxyPassword,
                               ReconnectPolicy reconnectPolicy, ApnsDelegate delegate, boolean errorDetection, ThreadFactory tf, int cacheLength,
                               boolean autoAdjustCacheLength, int readTimeout, int connectTimeout) {
+    	
         this.factory = factory;
         this.host = host;
         this.port = port;
@@ -140,7 +142,9 @@ public class ApnsConnectionImpl implements ApnsConnection {
     }
 
     public synchronized void close() {
+    	logger.warn("closing apns connection");
         close(socket);
+        shutdownExecutors();
     }
     
     public synchronized void close(Socket socketToClose) {
@@ -150,8 +154,28 @@ public class ApnsConnectionImpl implements ApnsConnection {
         	socket = null;
         }
     }
+    
+    private synchronized void shutdownExecutors() {
+    	logger.warn("shutting down executors");
+    	serialExecutor.shutdown(); // Disable new tasks from being submitted
+		try {
+			// Wait a while for existing tasks to terminate
+			if (!serialExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+				serialExecutor.shutdownNow(); // Cancel currently executing tasks
+				// Wait a while for tasks to respond to being cancelled
+				if (!serialExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+					logger.warn("serialExecutor did not terminate");
+				}
+			}
+		} catch (InterruptedException ie) {
+			// (Re-)Cancel if current thread also interrupted
+			serialExecutor.shutdownNow();
+			// Preserve interrupt status
+			Thread.currentThread().interrupt();
+		}
+    }
 
-    Executor serialExecutor = Executors.newSingleThreadExecutor();
+    ExecutorService serialExecutor = Executors.newSingleThreadExecutor();
     private void monitorSocket(final Socket currentSocket) {
         logger.debug("Launching Monitoring Thread for socket {}", currentSocket);
 
