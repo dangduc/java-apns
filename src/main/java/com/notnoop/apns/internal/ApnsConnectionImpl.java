@@ -76,8 +76,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
     private final boolean errorDetection;
     private final ThreadFactory threadFactory;
     private final boolean autoAdjustCacheLength;
-    private final ConcurrentLinkedQueue<ApnsNotification> cachedNotifications;
-    private Socket socket;
+    private ApnsSocket apnsSocket;
     private final AtomicInteger threadId = new AtomicInteger(0);
 
     public ApnsConnectionImpl(SocketFactory factory, String host, int port) {
@@ -112,7 +111,6 @@ public class ApnsConnectionImpl implements ApnsConnection {
         this.connectTimeout = connectTimeout;
         this.proxyUsername = proxyUsername;
         this.proxyPassword = proxyPassword;
-        cachedNotifications = new ConcurrentLinkedQueue<ApnsNotification>();
     }
 
     private ThreadFactory defaultThreadFactory() {
@@ -143,15 +141,20 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
     public synchronized void close() {
     	logger.warn("closing apns connection");
-        close(socket);
+        close(apnsSocket);
         shutdownExecutors();
     }
     
-    public synchronized void close(Socket socketToClose) {
+    public synchronized void close(ApnsSocket apnsSocketToClose) {
+    	if (apnsSocketToClose == null) {
+    		return;
+    	}
+    	
+    	Socket socketToClose = apnsSocketToClose.getSocket();
         Utilities.close(socketToClose);
-        // also, clear object reference to socket as socket.isClose() may be unreliable
-        if (socket == socketToClose) {
-        	socket = null;
+        // also, clear object reference to apns socket as socket.isClose() may be unreliable
+        if (apnsSocket == apnsSocketToClose) {
+        	apnsSocket = null;
         }
     }
     
@@ -176,7 +179,10 @@ public class ApnsConnectionImpl implements ApnsConnection {
     }
 
     ExecutorService serialExecutor = Executors.newSingleThreadExecutor();
-    private void monitorSocket(final Socket currentSocket) {
+    private void monitorSocket(final ApnsSocket currentApnsSocket) {
+    	final Socket currentSocket = currentApnsSocket.getSocket();
+    	final ConcurrentLinkedQueue<ApnsNotification> cachedNotifications = currentApnsSocket.getCachedNotifications();
+    	
         logger.debug("Launching Monitoring Thread for socket {}", currentSocket);
 
         Thread t = threadFactory.newThread(new Runnable() {
@@ -204,7 +210,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                         // Quickly close socket, so we won't ever try to send push notifications
                         // using the defective socket.
 
-                        close(currentSocket);
+                        close(currentApnsSocket);
                         
                     	synchronized (cachedNotifications) {
                         	try {
@@ -281,7 +287,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     // sending the message. Other than providing a more stable network connection to the APNS
                     // server we can't do much about it - so let's not spam the application's error log.
                     logger.info("Exception while waiting for error code", e);
-                    close(currentSocket);
+                    close(currentApnsSocket);
                     delegate.connectionClosed(DeliveryError.UNKNOWN, -1);
                 }
             }
@@ -315,12 +321,34 @@ public class ApnsConnectionImpl implements ApnsConnection {
         });
         t.start();
     }
+    
+    private class ApnsSocket {
+    	private final Socket socket;
+    	private final ConcurrentLinkedQueue<ApnsNotification> cachedNotifications;
+    	
+    	public Socket getSocket() {
+			return socket;
+		}
 
-    private synchronized Socket getOrCreateSocket(boolean resend) throws NetworkIOException {
-    	Socket currentSocket = socket;
+		public ConcurrentLinkedQueue<ApnsNotification> getCachedNotifications() {
+			return cachedNotifications;
+		}
+
+		public ApnsSocket(Socket socket, ConcurrentLinkedQueue<ApnsNotification> cachedNotifications) {
+    		this.socket = socket;
+    		this.cachedNotifications = cachedNotifications;
+    	}
+    	
+    	
+    }
+
+    private synchronized ApnsSocket getOrCreateSocket(boolean resend) throws NetworkIOException {
+    	ApnsSocket currentApnsSocket = apnsSocket;
+    	Socket currentSocket = currentApnsSocket != null ? apnsSocket.getSocket() : null;
+    	
         if (reconnectPolicy.shouldReconnect()) {
             logger.debug("Reconnecting due to reconnectPolicy dictating it");
-            close(currentSocket);
+            close(currentApnsSocket);
             currentSocket = null;
         }
 
@@ -343,7 +371,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                         success = true;
                     } finally {
                         if (!success) {
-                            close(proxySocket);
+                            Utilities.close(proxySocket);
                         }
                     }
                     logger.debug("Connected new socket through socks tunnel {}", currentSocket);
@@ -351,9 +379,12 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
                 currentSocket.setSoTimeout(readTimeout);
                 currentSocket.setKeepAlive(true);
-
+                ConcurrentLinkedQueue<ApnsNotification> cachedNotifications = new ConcurrentLinkedQueue<ApnsNotification>();
+                
+                currentApnsSocket = new ApnsSocket(currentSocket, cachedNotifications);
+                
                 if (errorDetection) {
-                    monitorSocket(currentSocket);
+                    monitorSocket(currentApnsSocket);
                 }
 
                 reconnectPolicy.reconnected();
@@ -365,9 +396,9 @@ public class ApnsConnectionImpl implements ApnsConnection {
             }
         }
         
-        socket = currentSocket;
+        apnsSocket = currentApnsSocket;
         
-        return currentSocket;
+        return apnsSocket;
     }
 
     int DELAY_IN_MS = 1000;
@@ -385,17 +416,19 @@ public class ApnsConnectionImpl implements ApnsConnection {
         }
 
         int attempts = 0;
+        ApnsSocket currentApnsSocket = null;
         Socket currentSocket = null;
         while (true) {
             try {
                 attempts++;
             	try {
-	                currentSocket = getOrCreateSocket(fromBuffer);
+	                currentApnsSocket = getOrCreateSocket(fromBuffer);
+            		currentSocket = currentApnsSocket.getSocket();
 	                currentSocket.getOutputStream().write(m.marshall());
 	                currentSocket.getOutputStream().flush();
             	} finally {
             		// if the send fails, we want to keep the message in the cache so that retrying is possible
-            		cacheNotification(m);
+            		cacheNotification(currentApnsSocket.getCachedNotifications(), m);
             	}
 
                 delegate.messageSent(m, fromBuffer);
@@ -404,7 +437,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                 attempts = 0;
                 break;
             } catch (IOException e) {
-                close(currentSocket);
+                close(currentApnsSocket);
                 if (attempts >= RETRIES) {
                     logger.error("Couldn't send message after " + RETRIES + " retries." + m, e);
                     delegate.messageSendFailed(m, e);
@@ -439,7 +472,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
         }
     }
 
-    private void cacheNotification(ApnsNotification notification) {
+    private void cacheNotification(ConcurrentLinkedQueue<ApnsNotification> cachedNotifications, ApnsNotification notification) {
     	synchronized( cachedNotifications ) {
 	        cachedNotifications.add(notification);
 	        while (cachedNotifications.size() > cacheLength) {
