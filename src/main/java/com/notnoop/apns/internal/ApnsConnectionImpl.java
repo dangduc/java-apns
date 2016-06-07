@@ -212,75 +212,72 @@ public class ApnsConnectionImpl implements ApnsConnection {
                         close(currentApnsSocket);
                         logger.debug("closed connection");
                         
-                    	synchronized (cachedNotifications) {
-                        	try {
-		                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
-	
-		                        int command = bytes[0] & 0xFF;
-		                        if (command != 8) {
-		                            throw new IOException("Unexpected command byte " + command);
-		                        }
-		                        int statusCode = bytes[1] & 0xFF;
-		                        DeliveryError e = DeliveryError.ofCode(statusCode);
-	
-		                        int id = Utilities.parseBytes(bytes[2], bytes[3], bytes[4], bytes[5]);
-	
-		                        logger.debug("Closed connection cause={}; id={}", e, id);
-		                        delegate.connectionClosed(e, id);
-	
-		                        Queue<ApnsNotification> tempCache = new LinkedList<ApnsNotification>();
-		                        ApnsNotification failedNotification = null;
-	
-		                        while (!cachedNotifications.isEmpty()) {
-		                        	ApnsNotification notification = cachedNotifications.poll();
-		                            logger.debug("Candidate for removal, message id {}", notification.getIdentifier());
-	
-		                            if (notification.getIdentifier() == id) {
-		                                logger.debug("Bad message found {}", notification.getIdentifier());
-		                                failedNotification = notification;
-		                                break;
-		                            }
-		                            tempCache.add(notification);
-		                        }
-	
-		                        if (failedNotification != null) { // notification found
-		                            logger.debug("delegate.messageSendFailed, message id {}", failedNotification.getIdentifier());
-		                            delegate.messageSendFailed(failedNotification, new ApnsDeliveryErrorException(e));
-		                            
-		                            // in some cases we can retry the message the failure occurred on
-		                            if ( e.shouldRetryFailedDelivery() )
-		                            	notificationsBuffer.add(failedNotification);
-		                        } else {
-		                            cachedNotifications.addAll(tempCache);
-		                            int resendSize = tempCache.size();
-		                            logger.warn("Received error for message that wasn't in the cache...");
-		                            if (autoAdjustCacheLength) {
-		                                cacheLength = cacheLength + (resendSize / 2);
-		                                delegate.cacheLengthExceeded(cacheLength);
-		                            }
-		                            logger.debug("delegate.messageSendFailed, unknown id");
-		                            delegate.messageSendFailed(null, new ApnsDeliveryErrorException(e));
-		                        }
-	
-		                        while (!cachedNotifications.isEmpty()) {
-		                            final ApnsNotification resendNotification = cachedNotifications.poll();
-		                            logger.debug("Queuing for resend {}", resendNotification.getIdentifier());
-		                            notificationsBuffer.add(resendNotification);
-		                        }
-		                        logger.debug("resending {} notifications", notificationsBuffer.size());
-		                        delegate.notificationsResent(notificationsBuffer.size());
-    	                    }
-    	                    finally {
-    	                    	serialExecutor.execute( new Runnable() {
-    	                    		public void run() {
-    	            	                drainBuffer(notificationsBuffer);                			
-    	                    		}
-    	                    	});
-    	                    }
-                        	
-	                    	logger.debug("Monitoring input stream closed by EOF");
+                    	try {
+	                        logger.debug("Error-response packet {}", Utilities.encodeHex(bytes));
 
-                    	} // end synchronization on cachedNotifications
+	                        int command = bytes[0] & 0xFF;
+	                        if (command != 8) {
+	                            throw new IOException("Unexpected command byte " + command);
+	                        }
+	                        int statusCode = bytes[1] & 0xFF;
+	                        DeliveryError e = DeliveryError.ofCode(statusCode);
+
+	                        int id = Utilities.parseBytes(bytes[2], bytes[3], bytes[4], bytes[5]);
+
+	                        logger.debug("Closed connection cause={}; id={}", e, id);
+	                        delegate.connectionClosed(e, id);
+
+	                        Queue<ApnsNotification> tempCache = new LinkedList<ApnsNotification>();
+	                        ApnsNotification failedNotification = null;
+
+	                        while (!cachedNotifications.isEmpty()) {
+	                        	ApnsNotification notification = cachedNotifications.poll();
+	                            logger.debug("Candidate for removal, message id {}", notification.getIdentifier());
+
+	                            if (notification.getIdentifier() == id) {
+	                                logger.debug("Bad message found {}", notification.getIdentifier());
+	                                failedNotification = notification;
+	                                break;
+	                            }
+	                            tempCache.add(notification);
+	                        }
+
+	                        if (failedNotification != null) { // notification found
+	                            logger.debug("delegate.messageSendFailed, message id {}", failedNotification.getIdentifier());
+	                            delegate.messageSendFailed(failedNotification, new ApnsDeliveryErrorException(e));
+	                            
+	                            // in some cases we can retry the message the failure occurred on
+	                            if ( e.shouldRetryFailedDelivery() )
+	                            	notificationsBuffer.add(failedNotification);
+	                        } else {
+	                            cachedNotifications.addAll(tempCache);
+	                            int resendSize = tempCache.size();
+	                            logger.warn("Received error for message that wasn't in the cache...");
+	                            if (autoAdjustCacheLength) {
+	                                cacheLength = cacheLength + (resendSize / 2);
+	                                delegate.cacheLengthExceeded(cacheLength);
+	                            }
+	                            logger.debug("delegate.messageSendFailed, unknown id");
+	                            delegate.messageSendFailed(null, new ApnsDeliveryErrorException(e));
+	                        }
+
+	                        while (!cachedNotifications.isEmpty()) {
+	                            final ApnsNotification resendNotification = cachedNotifications.poll();
+	                            logger.debug("Queuing for resend {}", resendNotification.getIdentifier());
+	                            notificationsBuffer.add(resendNotification);
+	                        }
+	                        logger.debug("resending {} notifications", notificationsBuffer.size());
+	                        delegate.notificationsResent(notificationsBuffer.size());
+	                    }
+	                    finally {
+	                    	serialExecutor.execute( new Runnable() {
+	                    		public void run() {
+	            	                drainBuffer(notificationsBuffer);                			
+	                    		}
+	                    	});
+	                    }
+                        
+                    	logger.debug("Monitoring input stream closed by EOF");
                     }
                 } catch (IOException e) {
                     // An exception when reading the error code is non-critical, it will cause another retry
@@ -473,13 +470,11 @@ public class ApnsConnectionImpl implements ApnsConnection {
     }
 
     private void cacheNotification(ConcurrentLinkedQueue<ApnsNotification> cachedNotifications, ApnsNotification notification) {
-    	synchronized( cachedNotifications ) {
-	        cachedNotifications.add(notification);
-	        while (cachedNotifications.size() > cacheLength) {
-	            cachedNotifications.poll();
-	            logger.debug("Removing notification from cache " + notification);
-	        }
-    	}
+        cachedNotifications.add(notification);
+        while (cachedNotifications.size() > cacheLength) {
+            cachedNotifications.poll();
+            logger.debug("Removing notification from cache " + notification);
+        }
     }
 
     public ApnsConnectionImpl copy() {
