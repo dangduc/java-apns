@@ -417,13 +417,13 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
         int attempts = 0;
         ApnsSocket currentApnsSocket = null;
-        Socket currentSocket = null;
         while (true) {
             try {
                 attempts++;
+                
+                currentApnsSocket = getOrCreateSocket(fromBuffer);
             	try {
-	                currentApnsSocket = getOrCreateSocket(fromBuffer);
-            		currentSocket = currentApnsSocket.getSocket();
+	                Socket currentSocket = currentApnsSocket.getSocket();
 	                currentSocket.getOutputStream().write(m.marshall());
 	                currentSocket.getOutputStream().flush();
             	} finally {
