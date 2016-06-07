@@ -339,7 +339,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
     	
     }
 
-    private synchronized ApnsSocket getOrCreateSocket(boolean resend) throws NetworkIOException {
+    private synchronized ApnsSocket getOrCreateApnsSocket(boolean resend) throws NetworkIOException {
     	ApnsSocket currentApnsSocket = apnsSocket;
     	Socket currentSocket = currentApnsSocket != null ? currentApnsSocket.getSocket() : null;
     	
@@ -350,52 +350,58 @@ public class ApnsConnectionImpl implements ApnsConnection {
         }
 
         if (currentSocket == null || currentSocket.isClosed()) {
-            try {
-                if (proxy == null) {
-                	currentSocket = factory.createSocket(host, port);
-                    logger.debug("Connected new socket {}", currentSocket);
-                } else if (proxy.type() == Proxy.Type.HTTP) {
-                    TlsTunnelBuilder tunnelBuilder = new TlsTunnelBuilder();
-                    currentSocket = tunnelBuilder.build((SSLSocketFactory) factory, proxy, proxyUsername, proxyPassword, host, port);
-                    logger.debug("Connected new socket through http tunnel {}", currentSocket);
-                } else {
-                    boolean success = false;
-                    Socket proxySocket = null;
-                    try {
-                        proxySocket = new Socket(proxy);
-                        proxySocket.connect(new InetSocketAddress(host, port), connectTimeout);
-                        currentSocket = ((SSLSocketFactory) factory).createSocket(proxySocket, host, port, false);
-                        success = true;
-                    } finally {
-                        if (!success) {
-                            Utilities.close(proxySocket);
-                        }
-                    }
-                    logger.debug("Connected new socket through socks tunnel {}", currentSocket);
-                }
-
-                currentSocket.setSoTimeout(readTimeout);
-                currentSocket.setKeepAlive(true);
-                ConcurrentLinkedQueue<ApnsNotification> cachedNotifications = new ConcurrentLinkedQueue<ApnsNotification>();
-                
-                currentApnsSocket = new ApnsSocket(currentSocket, cachedNotifications);
-                
-                if (errorDetection) {
-                    monitorSocket(currentApnsSocket);
-                }
-
-                reconnectPolicy.reconnected();
-                logger.debug("Made a new connection to APNS");
-            } catch (IOException e) {
-                logger.error("Couldn't connect to APNS server", e);
-                // indicate to clients whether this is a resend or initial send
-                throw new NetworkIOException(e, resend);
+        	currentSocket = getOrCreateSocket(resend);
+        	ConcurrentLinkedQueue<ApnsNotification> cachedNotifications = new ConcurrentLinkedQueue<ApnsNotification>();
+        	currentApnsSocket = new ApnsSocket(currentSocket, cachedNotifications);
+        	
+            if (errorDetection) {
+                monitorSocket(currentApnsSocket);
             }
         }
         
         apnsSocket = currentApnsSocket;
         
         return apnsSocket;
+    }
+
+    private Socket getOrCreateSocket(boolean resend) throws NetworkIOException {
+    	Socket currentSocket;
+        try {
+            if (proxy == null) {
+            	currentSocket = factory.createSocket(host, port);
+                logger.debug("Connected new socket {}", currentSocket);
+            } else if (proxy.type() == Proxy.Type.HTTP) {
+                TlsTunnelBuilder tunnelBuilder = new TlsTunnelBuilder();
+                currentSocket = tunnelBuilder.build((SSLSocketFactory) factory, proxy, proxyUsername, proxyPassword, host, port);
+                logger.debug("Connected new socket through http tunnel {}", currentSocket);
+            } else {
+                boolean success = false;
+                Socket proxySocket = null;
+                try {
+                    proxySocket = new Socket(proxy);
+                    proxySocket.connect(new InetSocketAddress(host, port), connectTimeout);
+                    currentSocket = ((SSLSocketFactory) factory).createSocket(proxySocket, host, port, false);
+                    success = true;
+                } finally {
+                    if (!success) {
+                        Utilities.close(proxySocket);
+                    }
+                }
+                logger.debug("Connected new socket through socks tunnel {}", currentSocket);
+            }
+
+            currentSocket.setSoTimeout(readTimeout);
+            currentSocket.setKeepAlive(true);
+            
+            reconnectPolicy.reconnected();
+            logger.debug("Made a new connection to APNS");
+        } catch (IOException e) {
+            logger.error("Couldn't connect to APNS server", e);
+            // indicate to clients whether this is a resend or initial send
+            throw new NetworkIOException(e, resend);
+        }
+        
+        return currentSocket;
     }
 
     int DELAY_IN_MS = 1000;
@@ -418,7 +424,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
             try {
                 attempts++;
                 
-                currentApnsSocket = getOrCreateSocket(fromBuffer);
+                currentApnsSocket = getOrCreateApnsSocket(fromBuffer);
             	try {
 	                Socket currentSocket = currentApnsSocket.getSocket();
 	                currentSocket.getOutputStream().write(m.marshall());
