@@ -344,7 +344,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
 
     private synchronized ApnsSocket getOrCreateSocket(boolean resend) throws NetworkIOException {
     	ApnsSocket currentApnsSocket = apnsSocket;
-    	Socket currentSocket = currentApnsSocket != null ? apnsSocket.getSocket() : null;
+    	Socket currentSocket = currentApnsSocket != null ? currentApnsSocket.getSocket() : null;
     	
         if (reconnectPolicy.shouldReconnect()) {
             logger.debug("Reconnecting due to reconnectPolicy dictating it");
