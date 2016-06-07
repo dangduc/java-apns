@@ -188,7 +188,6 @@ public class ApnsConnectionImpl implements ApnsConnection {
         Thread t = threadFactory.newThread(new Runnable() {
             final static int EXPECTED_SIZE = 6;
 
-            @SuppressWarnings("InfiniteLoopStatement")
             @Override
             public void run() {
                 logger.debug("Started monitoring thread");
