@@ -279,7 +279,7 @@ public class ApnsConnectionImpl implements ApnsConnection {
                         	
 	                    	logger.debug("Monitoring input stream closed by EOF");
 
-                    	} // end synchronization on ApnsConnectionImpl.this
+                    	} // end synchronization on cachedNotifications
                     }
                 } catch (IOException e) {
                     // An exception when reading the error code is non-critical, it will cause another retry
