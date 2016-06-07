@@ -208,8 +208,9 @@ public class ApnsConnectionImpl implements ApnsConnection {
                     while (in != null && readPacket(in, bytes)) {
                         // Quickly close socket, so we won't ever try to send push notifications
                         // using the defective socket.
-
+                    	logger.debug("error found, closing connection");
                         close(currentApnsSocket);
+                        logger.debug("closed connection");
                         
                     	synchronized (cachedNotifications) {
                         	try {
